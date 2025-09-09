@@ -67,6 +67,32 @@ const getImageUrl = (color: string, name: string) =>
 
 const cardWidth = 74;
 const cardHeight = cardWidth * 1.5;
+const MUSIC_FILE_NAMES = [
+  "fantasy-medieval-mystery-ambient.mp3",
+  "medieval-citytavern-ambient.mp3",
+  "medieval-fantasy.mp3",
+  "mountain-knight-castle-medieval-fantasy-orchestral-music.mp3",
+];
+
+// TODO: Upload these music files to the GCS bucket under the path "music/" for production builds.
+function getMusicUrls(): string[] {
+  const isDev = process.env.NODE_ENV === "development";
+  return isDev
+    ? MUSIC_FILE_NAMES.map((name) => `/music/${name}`)
+    : MUSIC_FILE_NAMES.map((name) => getStorageUrl(`music/${name}`));
+}
+const MUSIC_URLS = getMusicUrls();
+
+function shuffleArray<T>(input: T[]): T[] {
+  const arr = input.slice();
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = arr[i];
+    arr[i] = arr[j];
+    arr[j] = tmp;
+  }
+  return arr;
+}
 
 const cardStyle: React.CSSProperties = {
   border: "2px solid #555",
@@ -441,6 +467,93 @@ function MadrigalBoard({
     [moveHash: string]: boolean;
   }>({});
   const [detailedCardId, setDetailedCardId] = React.useState<string>("");
+  // Background music state and control
+  const bgmRef = React.useRef<Howl | null>(null);
+  const [musicOn, setMusicOn] = React.useState(true);
+  const [musicVolume, setMusicVolume] = React.useState(0.35);
+  const [playlist, setPlaylist] = React.useState<string[]>(() =>
+    shuffleArray(MUSIC_URLS)
+  );
+  const [trackIndex, setTrackIndex] = React.useState(0);
+
+  // Create/replace Howl when track changes
+  React.useEffect(() => {
+    if (!playlist.length) return;
+    const prev = bgmRef.current;
+    if (prev) {
+      try {
+        prev.stop();
+      } catch (e) {}
+      prev.unload();
+    }
+    const next = new Howl({
+      src: [playlist[trackIndex]],
+      loop: false,
+      volume: musicVolume,
+      html5: true,
+      onend: () => {
+        setTrackIndex((i) => (i + 1) % playlist.length);
+      },
+    });
+    bgmRef.current = next;
+    if (musicOn) {
+      try {
+        next.play();
+      } catch (e) {}
+    }
+    return () => {};
+  }, [trackIndex, playlist]);
+
+  // Start playback on first user interaction
+  React.useEffect(() => {
+    const tryStart = () => {
+      const bgm = bgmRef.current;
+      if (!bgm) return;
+      if (!bgm.playing() && musicOn) {
+        try {
+          bgm.play();
+        } catch (e) {}
+      }
+    };
+    window.addEventListener("pointerdown", tryStart, { once: true });
+    window.addEventListener("keydown", tryStart, { once: true });
+    return () => {
+      window.removeEventListener("pointerdown", tryStart);
+      window.removeEventListener("keydown", tryStart);
+      const bgm = bgmRef.current;
+      if (bgm) {
+        try {
+          bgm.stop();
+        } catch (e) {}
+        bgm.unload();
+        bgmRef.current = null;
+      }
+    };
+  }, [musicOn]);
+
+  React.useEffect(() => {
+    const bgm = bgmRef.current;
+    if (!bgm) return;
+    if (musicOn) {
+      if (!bgm.playing()) {
+        try {
+          bgm.play();
+        } catch (e) {}
+      }
+    } else {
+      if (bgm.playing()) {
+        bgm.pause();
+      }
+    }
+  }, [musicOn]);
+
+  React.useEffect(() => {
+    const bgm = bgmRef.current;
+    if (!bgm) return;
+    try {
+      bgm.volume(musicVolume);
+    } catch (e) {}
+  }, [musicVolume]);
   if (lastMove) {
     console.log("LAST MOVE", lastMove);
     const moveArgs = lastMove.action.payload.args as any[];
@@ -565,6 +678,27 @@ function MadrigalBoard({
         backgroundSize: "cover",
       }}
     >
+      <div style={{ position: "fixed", top: 8, right: 8, zIndex: 10, display: "flex", gap: 8, alignItems: "center", background: "rgba(0,0,0,0.4)", padding: 6, borderRadius: 6 }}>
+        <button
+          onClick={() => setMusicOn((v) => !v)}
+          style={{ height: 32, borderRadius: 5, fontSize: 12 }}
+        >
+          {musicOn ? "Music: On" : "Music: Off"}
+        </button>
+        <label style={{ color: "white", fontSize: 12, display: "flex", alignItems: "center", gap: 6 }}>
+          Vol
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={musicVolume}
+            onChange={(e) => setMusicVolume(Number(e.target.value))}
+            style={{ width: 100 }}
+          />
+          <span>{Math.round(musicVolume * 100)}%</span>
+        </label>
+      </div>
       <Modal
         isOpen={modalIsOpen}
         onAfterOpen={afterOpenModal}
